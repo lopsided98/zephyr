@@ -61,6 +61,12 @@ static int adc_nrfx_channel_setup(const struct device *dev,
 	case ADC_GAIN_1:
 		config->scaling = NRF_ADC_CONFIG_SCALING_INPUT_FULL_SCALE;
 		break;
+	case ADC_GAIN_SUPPLY_1_3:
+		config->scaling = NRF_ADC_CONFIG_SCALING_SUPPLY_ONE_THIRD;
+		break;
+	case ADC_GAIN_SUPPLY_2_3:
+		config->scaling = NRF_ADC_CONFIG_SCALING_SUPPLY_TWO_THIRDS;
+		break;
 	default:
 		LOG_ERR("Selected ADC gain is not valid");
 		return -EINVAL;

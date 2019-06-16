@@ -35,6 +35,8 @@ enum adc_gain {
 	ADC_GAIN_1_3, /**< x 1/3. */
 	ADC_GAIN_1_2, /**< x 1/2. */
 	ADC_GAIN_2_3, /**< x 2/3. */
+	ADC_GAIN_SUPPLY_1_3, /**< supply voltage x 1/3. */
+	ADC_GAIN_SUPPLY_2_3, /**< supply voltage x 2/3. */
 	ADC_GAIN_1,   /**< x 1. */
 	ADC_GAIN_2,   /**< x 2. */
 	ADC_GAIN_3,   /**< x 3. */
