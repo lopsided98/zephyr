@@ -38,3 +38,17 @@ properties:
       - "PCLK32M"
       - "PCLK32M_HFXO"
       - "ACLK"
+
+  mck-min-frequency:
+    type: int
+    default: 0
+    description: |
+      Minimum MCK frequency. Required when MCK is routed to an external device
+      that accepts a limited range of input clock frequencies.
+
+  mck-max-frequency:
+    type: int
+    default: 0
+    description: |
+      Maximum MCK frequency. Required when MCK is routed to an external device
+      that accepts a limited range of input clock frequencies.

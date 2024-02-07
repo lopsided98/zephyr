@@ -54,12 +54,14 @@ struct i2s_nrfx_drv_cfg {
 		PCLK32M_HFXO,
 		ACLK
 	} clk_src;
+	uint32_t mck_min_frequency;
+	uint32_t mck_max_frequency;
 };
 
 /* Finds the clock settings that give the frame clock frequency closest to
  * the one requested, taking into account the hardware limitations.
  */
-static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
+static int find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 				nrfx_i2s_config_t *config,
 				const struct i2s_config *i2s_cfg)
 {
@@ -124,6 +126,15 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 			}
 			uint32_t actual_mck = src_freq / (MCKCONST / mck_factor);
 
+			if (drv_cfg->mck_min_frequency &&
+			    actual_mck < drv_cfg->mck_min_frequency) {
+				continue;
+			}
+			if (drv_cfg->mck_max_frequency &&
+			    actual_mck > drv_cfg->mck_max_frequency) {
+				continue;
+			}
+
 			uint32_t lrck_freq = actual_mck / ratios[r].ratio_val;
 			uint32_t diff = lrck_freq >= i2s_cfg->frame_clk_freq
 					? (lrck_freq - i2s_cfg->frame_clk_freq)
@@ -169,6 +180,15 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 					? (lrck_freq - i2s_cfg->frame_clk_freq)
 					: (i2s_cfg->frame_clk_freq - lrck_freq);
 
+				if (drv_cfg->mck_min_frequency &&
+				    mck_freq < drv_cfg->mck_min_frequency) {
+					continue;
+				}
+				if (drv_cfg->mck_max_frequency &&
+				    mck_freq > drv_cfg->mck_max_frequency) {
+					continue;
+				}
+
 				if (diff < best_diff) {
 					best_mck_cfg = dividers[d].divider_enum;
 					best_mck = mck_freq;
@@ -188,6 +208,11 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 		}
 	}
 
+	if (best_diff == UINT32_MAX) {
+		/* Could not find configuration that satisfies constraints */
+		return -EINVAL;
+	}
+
 	config->mck_setup = best_mck_cfg;
 #if NRF_I2S_HAS_CLKCONFIG
 	config->enable_bypass = best_mck_bypass;
@@ -195,6 +220,7 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 	config->ratio = ratios[best_r].ratio_enum;
 	LOG_INF("I2S MCK frequency: %u, actual PCM rate: %u",
 		best_mck, best_mck / ratios[best_r].ratio_val);
+	return 0;
 }
 
 static bool get_next_tx_buffer(struct i2s_nrfx_drv_data *drv_data,
@@ -431,6 +457,7 @@ static int i2s_nrfx_configure(const struct device *dev, enum i2s_dir dir,
 	struct i2s_nrfx_drv_data *drv_data = dev->data;
 	const struct i2s_nrfx_drv_cfg *drv_cfg = dev->config;
 	nrfx_i2s_config_t nrfx_cfg;
+	int ret;
 
 	if (drv_data->state != I2S_STATE_READY) {
 		LOG_ERR("Cannot configure in state: %d", drv_data->state);
@@ -532,7 +559,10 @@ static int i2s_nrfx_configure(const struct device *dev, enum i2s_dir dir,
 	if (nrfx_cfg.mode == NRF_I2S_MODE_MASTER ||
 	    (nrf_i2s_mck_pin_get(drv_cfg->i2s.p_reg) & I2S_PSEL_MCK_CONNECT_Msk)
 	    == I2S_PSEL_MCK_CONNECT_Connected << I2S_PSEL_MCK_CONNECT_Pos) {
-		find_suitable_clock(drv_cfg, &nrfx_cfg, i2s_cfg);
+		ret = find_suitable_clock(drv_cfg, &nrfx_cfg, i2s_cfg);
+		if (ret < 0) {
+			return ret;
+		}
 		/* Unless the PCLK32M source is used with the HFINT oscillator
 		 * (which is always available without any additional actions),
 		 * it is required to request the proper clock to be running
@@ -956,6 +986,8 @@ static const struct i2s_driver_api i2s_nrf_drv_api = {
 		.nrfx_def_cfg.skip_psel_cfg = true,			     \
 		.pcfg = PINCTRL_DT_DEV_CONFIG_GET(I2S(idx)),		     \
 		.clk_src = I2S_CLK_SRC(idx),				     \
+		.mck_min_frequency = DT_PROP(I2S(idx), mck_min_frequency),   \
+		.mck_max_frequency = DT_PROP(I2S(idx), mck_max_frequency),   \
 	};								     \
 	static struct i2s_nrfx_drv_data i2s_nrfx_data##idx = {		     \
 		.state = I2S_STATE_READY,				     \
