@@ -92,6 +92,9 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 	uint32_t best_diff = UINT32_MAX;
 	uint8_t r, best_r = 0;
 	nrf_i2s_mck_t best_mck_cfg = 0;
+#if NRF_I2S_HAS_CLKCONFIG
+	bool best_mck_bypass = false;
+#endif
 	uint32_t best_mck = 0;
 
 	for (r = 0; (best_diff != 0) && (r < ARRAY_SIZE(ratios)); ++r) {
@@ -128,6 +131,10 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 
 			if (diff < best_diff) {
 				best_mck_cfg = mck_factor * 4096;
+#if NRF_I2S_HAS_CLKCONFIG
+				/* MCK divider of 1 is acheived using bypass mode */
+				best_mck_bypass = actual_mck == src_freq;
+#endif
 				best_mck = actual_mck;
 				best_r = r;
 				best_diff = diff;
@@ -182,6 +189,9 @@ static void find_suitable_clock(const struct i2s_nrfx_drv_cfg *drv_cfg,
 	}
 
 	config->mck_setup = best_mck_cfg;
+#if NRF_I2S_HAS_CLKCONFIG
+	config->enable_bypass = best_mck_bypass;
+#endif
 	config->ratio = ratios[best_r].ratio_enum;
 	LOG_INF("I2S MCK frequency: %u, actual PCM rate: %u",
 		best_mck, best_mck / ratios[best_r].ratio_val);
@@ -534,6 +544,12 @@ static int i2s_nrfx_configure(const struct device *dev, enum i2s_dir dir,
 		drv_data->request_clock = false;
 	}
 
+#if NRF_I2S_HAS_CLKCONFIG
+	nrfx_cfg.clksrc = drv_cfg->clk_src == ACLK
+		? NRF_I2S_CLKSRC_ACLK
+		: NRF_I2S_CLKSRC_PCLK32M;
+#endif
+
 	if ((i2s_cfg->options & I2S_OPT_LOOPBACK) ||
 	    (i2s_cfg->options & I2S_OPT_PINGPONG)) {
 		LOG_ERR("Unsupported options: 0x%02x", i2s_cfg->options);
@@ -754,13 +770,6 @@ static int trigger_start(const struct device *dev)
 	}
 
 	drv_data->state = I2S_STATE_RUNNING;
-
-#if NRF_I2S_HAS_CLKCONFIG
-	nrf_i2s_clk_configure(drv_cfg->i2s.p_reg,
-			      drv_cfg->clk_src == ACLK ? NRF_I2S_CLKSRC_ACLK
-						       : NRF_I2S_CLKSRC_PCLK32M,
-			      false);
-#endif
 
 	/* If it is required to use certain HF clock, request it to be running
 	 * first. If not, start the transfer directly.
