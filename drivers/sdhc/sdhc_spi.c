@@ -92,15 +92,21 @@ BUILD_ASSERT(sizeof(sdhc_ones) == 512, "0xFF array for SDHC must be 512 bytes");
 struct sdhc_spi_config {
 	const struct device *spi_dev;
 	const struct gpio_dt_spec pwr_gpio;
+	const struct gpio_dt_spec cd_gpio;
 	const uint32_t spi_max_freq;
 	uint32_t power_delay_ms;
 };
 
 struct sdhc_spi_data {
+	const struct device* dev;
 	enum sdhc_power power_mode;
 	struct spi_config *spi_cfg;
 	struct spi_config cfg_a;
 	struct spi_config cfg_b;
+	struct gpio_callback cd_callback;
+	sdhc_interrupt_cb_t sdhc_cb;
+	void *sdhc_cb_user_data;
+	int sdhc_cb_sources;
 	uint8_t scratch[MAX_CMD_READ];
 };
 
@@ -757,8 +763,31 @@ static int sdhc_spi_set_io(const struct device *dev, struct sdhc_io *ios)
 
 static int sdhc_spi_get_card_present(const struct device *dev)
 {
-	/* SPI has no card presence method, assume card is in slot */
-	return 1;
+	const struct sdhc_spi_config *config = dev->config;
+
+	if (config->cd_gpio.port == NULL) {
+		/* No card detect GPIO, assume card is in slot */
+		return 1;
+	}
+
+	return gpio_pin_get_dt(&config->cd_gpio);
+}
+
+static void sdhc_spi_cd_gpio_cb(const struct device *port,
+				struct gpio_callback *cb,
+				gpio_port_pins_t pins)
+{
+	struct sdhc_spi_data *data = CONTAINER_OF(cb, struct sdhc_spi_data, cd_callback);
+	const struct device *dev = data->dev;
+	const struct sdhc_spi_config *cfg = dev->config;
+
+	if (data->sdhc_cb) {
+		if (gpio_pin_get_dt(&cfg->cd_gpio)) {
+			data->sdhc_cb(dev, SDHC_INT_INSERTED, data->sdhc_cb_user_data);
+		} else {
+			data->sdhc_cb(dev, SDHC_INT_REMOVED, data->sdhc_cb_user_data);
+		}
+	}
 }
 
 static int sdhc_spi_get_host_props(const struct device *dev,
@@ -785,6 +814,62 @@ static int sdhc_spi_reset(const struct device *dev)
 	return 0;
 }
 
+static int sdhc_spi_cd_interrupt_configure(const struct device *dev, int sources) {
+	const struct sdhc_spi_config *cfg = dev->config;
+	int ret;
+
+	if (cfg->cd_gpio.port) {
+		gpio_flags_t flags;
+		if ((sources & SDHC_INT_INSERTED) && (sources & SDHC_INT_REMOVED)) {
+			flags = GPIO_INT_EDGE_BOTH;
+		} else if (sources & SDHC_INT_INSERTED) {
+			flags = GPIO_INT_EDGE_TO_ACTIVE;
+		} else if (sources & SDHC_INT_REMOVED) {
+			flags = GPIO_INT_EDGE_TO_INACTIVE;
+		} else {
+			flags = GPIO_INT_DISABLE;
+		}
+
+		ret = gpio_pin_interrupt_configure_dt(&cfg->cd_gpio, flags);
+		if (ret) {
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static int sdhc_spi_enable_interrupt(const struct device *dev, sdhc_interrupt_cb_t callback,
+				     int sources, void *user_data)
+{
+	const struct sdhc_spi_config *cfg = dev->config;
+	struct sdhc_spi_data *data = dev->data;
+
+	/* Only insert/remove interrupts are supported */
+	if (sources & ~(SDHC_INT_INSERTED | SDHC_INT_REMOVED)) {
+		return -ENOTSUP;
+	}
+
+	/* Insert/remove detection requires card detect GPIO */
+	if (!cfg->cd_gpio.port) {
+		return -ENOTSUP;
+	}
+
+	data->sdhc_cb = callback;
+	data->sdhc_cb_user_data = user_data;
+	data->sdhc_cb_sources |= sources;
+
+	return sdhc_spi_cd_interrupt_configure(dev, data->sdhc_cb_sources);
+}
+
+static int sdhc_spi_disable_interrupt(const struct device *dev, int sources)
+{
+	struct sdhc_spi_data *data = dev->data;
+
+	data->sdhc_cb_sources &= ~sources;
+
+	return sdhc_spi_cd_interrupt_configure(dev, data->sdhc_cb_sources);
+}
+
 static int sdhc_spi_init(const struct device *dev)
 {
 	const struct sdhc_spi_config *cfg = dev->config;
@@ -794,6 +879,7 @@ static int sdhc_spi_init(const struct device *dev)
 	if (!device_is_ready(cfg->spi_dev)) {
 		return -ENODEV;
 	}
+	data->dev = dev;
 	if (cfg->pwr_gpio.port) {
 		if (!gpio_is_ready_dt(&cfg->pwr_gpio)) {
 			return -ENODEV;
@@ -801,6 +887,22 @@ static int sdhc_spi_init(const struct device *dev)
 		ret = gpio_pin_configure_dt(&cfg->pwr_gpio, GPIO_OUTPUT_INACTIVE);
 		if (ret != 0) {
 			LOG_ERR("Could not configure power gpio (%d)", ret);
+			return ret;
+		}
+	}
+	if (cfg->cd_gpio.port) {
+		if (!gpio_is_ready_dt(&cfg->cd_gpio)) {
+			return -ENODEV;
+		}
+		ret = gpio_pin_configure_dt(&cfg->cd_gpio, GPIO_INPUT);
+		if (ret != 0) {
+			LOG_ERR("Could not configure CD gpio (%d)", ret);
+			return ret;
+		}
+
+		gpio_init_callback(&data->cd_callback, sdhc_spi_cd_gpio_cb, BIT(cfg->cd_gpio.pin));
+		ret = gpio_add_callback_dt(&cfg->cd_gpio, &data->cd_callback);
+		if (ret) {
 			return ret;
 		}
 	}
@@ -817,6 +919,8 @@ static const struct sdhc_driver_api sdhc_spi_api = {
 	.get_card_present = sdhc_spi_get_card_present,
 	.reset = sdhc_spi_reset,
 	.card_busy = sdhc_spi_card_busy,
+	.enable_interrupt = sdhc_spi_enable_interrupt,
+	.disable_interrupt = sdhc_spi_disable_interrupt,
 };
 
 
@@ -824,6 +928,7 @@ static const struct sdhc_driver_api sdhc_spi_api = {
 	const struct sdhc_spi_config sdhc_spi_config_##n = {			\
 		.spi_dev = DEVICE_DT_GET(DT_INST_PARENT(n)),			\
 		.pwr_gpio = GPIO_DT_SPEC_INST_GET_OR(n, pwr_gpios, {0}),	\
+		.cd_gpio = GPIO_DT_SPEC_INST_GET_OR(n, cd_gpios, {0}),		\
 		.spi_max_freq = DT_INST_PROP(n, spi_max_frequency),		\
 		.power_delay_ms = DT_INST_PROP(n, power_delay_ms),		\
 	};									\
