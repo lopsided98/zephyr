@@ -725,12 +725,12 @@ int sdmmc_card_init(struct sd_card *card)
 	 * With card in data transfer state, we can set SD clock to maximum
 	 * frequency for non high speed mode (25Mhz)
 	 */
-	if (card->host_props.f_max < SD_CLOCK_25MHZ) {
-		LOG_INF("Maximum SD clock is under 25MHz, using clock of %dHz",
+	if (card->host_props.f_max < SD_CLOCK_50MHZ) {
+		LOG_INF("Maximum SD clock is under 50MHz, using clock of %dHz",
 			card->host_props.f_max);
 		card->bus_io.clock = card->host_props.f_max;
 	} else {
-		card->bus_io.clock = SD_CLOCK_25MHZ;
+		card->bus_io.clock = SD_CLOCK_50MHZ;
 	}
 	ret = sdhc_set_io(card->sdhc, &card->bus_io);
 	if (ret) {
