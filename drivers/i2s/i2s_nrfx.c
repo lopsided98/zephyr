@@ -256,13 +256,13 @@ static void free_tx_buffer(struct i2s_nrfx_drv_data *drv_data,
 			   const void *buffer)
 {
 	k_mem_slab_free(drv_data->tx.cfg.mem_slab, (void *)buffer);
-	LOG_DBG("Freed TX %p", buffer);
+	LOG_DBG("Freed TX %p", (void *)buffer);
 }
 
 static void free_rx_buffer(struct i2s_nrfx_drv_data *drv_data, void *buffer)
 {
 	k_mem_slab_free(drv_data->rx.cfg.mem_slab, buffer);
-	LOG_DBG("Freed RX %p", buffer);
+	LOG_DBG("Freed RX %p", (void *)buffer);
 }
 
 static bool supply_next_buffers(struct i2s_nrfx_drv_data *drv_data,
@@ -285,7 +285,7 @@ static bool supply_next_buffers(struct i2s_nrfx_drv_data *drv_data,
 
 	drv_data->last_tx_buffer = next->p_tx_buffer;
 
-	LOG_DBG("Next buffers: %p/%p", next->p_tx_buffer, next->p_rx_buffer);
+	LOG_DBG("Next buffers: %p/%p", (void *)next->p_tx_buffer, (void *)next->p_rx_buffer);
 	nrfx_i2s_next_buffers_set(drv_data->p_i2s, next);
 	return true;
 }
@@ -357,7 +357,7 @@ static void data_handler(const struct device *dev,
 
 				free_rx_buffer(drv_data, released->p_rx_buffer);
 			} else {
-				LOG_DBG("Queued RX %p", released->p_rx_buffer);
+				LOG_DBG("Queued RX %p", (void *)released->p_rx_buffer);
 
 				/* If the TX direction is not active and
 				 * the transfer should be stopped after
@@ -637,7 +637,7 @@ static int i2s_nrfx_read(const struct device *dev,
 		return -EIO;
 	}
 
-	LOG_DBG("Released RX %p", buf.mem_block);
+	LOG_DBG("Released RX %p", (void *)buf.mem_block);
 
 	if (ret == 0) {
 		*mem_block = buf.mem_block;
@@ -678,7 +678,7 @@ static int i2s_nrfx_write(const struct device *dev,
 		return ret;
 	}
 
-	LOG_DBG("Queued TX %p", mem_block);
+	LOG_DBG("Queued TX %p", (void *)mem_block);
 
 	/* Check if interrupt wanted to get next TX buffer before current buffer
 	 * was queued. Do not move this check before queuing because doing so
@@ -700,7 +700,7 @@ static int i2s_nrfx_write(const struct device *dev,
 
 		drv_data->next_tx_buffer_needed = false;
 
-		LOG_DBG("Next TX %p", next.p_tx_buffer);
+		LOG_DBG("Next TX %p", (void *)next.p_tx_buffer);
 
 		if (!supply_next_buffers(drv_data, &next)) {
 			return -EIO;
